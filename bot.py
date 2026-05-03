@@ -41,8 +41,6 @@ REASONS = [
 ]
 
 
-# ── утиліти ──────────────────────────────────────────────────────────────────
-
 def norm(plate: str) -> str:
     return re.sub(r"\s+", "", plate.upper())
 
@@ -63,57 +61,52 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
     )
 
-async def cb_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    await q.message.delete()
-    if q.data == "owner":
-        return await _owner_start(update, context)
-    if q.data == "report":
-        return await _report_start(update, context)
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # ВЛАСНИК
 # ════════════════════════════════════════════════════════════════════════════
 
-async def cmd_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _owner_start(update, context)
+async def owner_entry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await _owner_menu(update, context)
 
-async def _owner_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def owner_entry_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await q.message.delete()
+    return await _owner_menu(update, context)
+
+async def _owner_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     cars = db.get_cars_by_user(user.id)
     if cars:
         text = "👤 *Мій гараж*\n\n" + "\n".join(f"🚗 {p}" for p in cars) + "\n\nЩо зробити?"
-        kb   = [["➕ Додати авто", "🗑 Видалити авто"], ["📋 Мої авто", "🏠 Меню"]]
-        await _reply(update, text, ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        kb = [["➕ Додати авто", "🗑 Видалити авто"], ["📋 Мої авто", "🏠 Меню"]]
+        await _send(update, text, ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return OWN_MANAGE
     else:
-        await _reply(update,
-            "🚗 *Реєстрація авто*\n\nВведи номерний знак:\nПриклад: `АЕ1234АЕ`")
+        await _send(update, "🚗 *Реєстрація авто*\n\nВведи номерний знак:\nПриклад: `АЕ1234АЕ`")
         return OWN_PLATE
 
 async def own_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"own_plate: отримано '{update.message.text}'")
     plate = norm(update.message.text)
+
     if not valid(plate):
-        await update.message.reply_text("❌ Невірний формат. Приклад: `АЕ1234АЕ`",
-                                        parse_mode="Markdown")
+        await update.message.reply_text("❌ Невірний формат. Приклад: `АЕ1234АЕ`", parse_mode="Markdown")
         return OWN_PLATE
 
     existing = db.find_owner(plate)
     if existing:
         if existing["user_id"] == str(update.effective_user.id):
-            await update.message.reply_text(f"⚠️ *{plate}* вже зареєстровано на тебе.",
-                                            parse_mode="Markdown")
+            await update.message.reply_text(f"⚠️ *{plate}* вже зареєстровано на тебе.", parse_mode="Markdown")
         else:
-            await update.message.reply_text(f"❌ *{plate}* вже зайнятий.",
-                                            parse_mode="Markdown")
+            await update.message.reply_text(f"❌ *{plate}* вже зайнятий.", parse_mode="Markdown")
         return OWN_PLATE
 
     context.user_data["plate"] = plate
     u = update.effective_user
     tag = f"@{u.username}" if u.username else u.full_name
-    kb  = [["✅ Підтвердити", "❌ Скасувати"]]
+    kb = [["✅ Підтвердити", "❌ Скасувати"]]
     await update.message.reply_text(
         f"Підтвердь:\n\n🚗 *{plate}*\n👤 {tag}",
         parse_mode="Markdown",
@@ -123,12 +116,12 @@ async def own_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def own_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "✅ Підтвердити":
-        u     = update.effective_user
+        u = update.effective_user
         plate = context.user_data["plate"]
-        ok    = db.register_car(plate, str(u.id), u.username or "", u.full_name)
+        ok = db.register_car(plate, str(u.id), u.username or "", u.full_name)
         if ok:
             await update.message.reply_text(
-                f"✅ *{plate}* зареєстровано!\n\nКоли хтось повідомить про твоє авто — прийде сповіщення сюди 📱",
+                f"✅ *{plate}* зареєстровано!\n\nКоли хтось повідомить про твоє авто — прийде сповіщення 📱",
                 parse_mode="Markdown",
                 reply_markup=ReplyKeyboardRemove(),
             )
@@ -149,8 +142,7 @@ async def own_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "📋 Мої авто":
         cars = db.get_cars_by_user(user.id)
-        await update.message.reply_text(
-            "🚗 " + "\n🚗 ".join(cars) if cars else "Немає авто.")
+        await update.message.reply_text("🚗 " + "\n🚗 ".join(cars) if cars else "Немає авто.")
         return OWN_MANAGE
 
     if text == "➕ Додати авто":
@@ -171,14 +163,14 @@ async def own_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("deleting"):
         if text == "❌ Скасувати":
             context.user_data.pop("deleting", None)
-            return await _owner_start(update, context)
+            return await _owner_menu(update, context)
         plate = norm(text)
         if db.remove_car(plate, str(user.id)):
             await update.message.reply_text(f"✅ *{plate}* видалено.", parse_mode="Markdown")
         else:
             await update.message.reply_text("❌ Не знайдено.")
         context.user_data.pop("deleting", None)
-        return await _owner_start(update, context)
+        return await _owner_menu(update, context)
 
     return OWN_MANAGE
 
@@ -187,12 +179,23 @@ async def own_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # РЕПОРТ
 # ════════════════════════════════════════════════════════════════════════════
 
-async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _report_start(update, context)
+async def report_entry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔔 *Повідомити про авто*\n\nВведи номерний знак:\nПриклад: `АЕ1234АЕ`",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return REP_PLATE
 
-async def _report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _reply(update,
-        "🔔 *Повідомити про авто*\n\nВведи номерний знак авто що заважає:\nПриклад: `АЕ1234АЕ`")
+async def report_entry_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await q.message.delete()
+    await q.message.reply_text(
+        "🔔 *Повідомити про авто*\n\nВведи номерний знак:\nПриклад: `АЕ1234АЕ`",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove(),
+    )
     return REP_PLATE
 
 async def rep_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -245,11 +248,11 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Надішли фото або натисни «Пропустити фото».")
         return REP_PHOTO
 
-    plate    = context.user_data["rep_plate"]
-    owner    = context.user_data["rep_owner"]
-    reason   = context.user_data.get("rep_reason", "Не вказано")
+    plate  = context.user_data["rep_plate"]
+    owner  = context.user_data["rep_owner"]
+    reason = context.user_data.get("rep_reason", "Не вказано")
     reporter = update.effective_user
-    tag      = f"@{reporter.username}" if reporter.username else reporter.full_name
+    tag = f"@{reporter.username}" if reporter.username else reporter.full_name
 
     msg = (
         f"🚨 *УВАГА! Проблема з твоїм авто!*\n\n"
@@ -260,13 +263,12 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        bot = context.bot
         if photo_id:
-            await bot.send_photo(chat_id=int(owner["user_id"]),
-                                 photo=photo_id, caption=msg, parse_mode="Markdown")
+            await context.bot.send_photo(chat_id=int(owner["user_id"]),
+                                         photo=photo_id, caption=msg, parse_mode="Markdown")
         else:
-            await bot.send_message(chat_id=int(owner["user_id"]),
-                                   text=msg, parse_mode="Markdown")
+            await context.bot.send_message(chat_id=int(owner["user_id"]),
+                                           text=msg, parse_mode="Markdown")
 
         await update.message.reply_text(
             f"✅ *Сповіщення надіслано!*\n\nВласник *{plate}* отримав повідомлення. Дякуємо! 🙌",
@@ -276,7 +278,7 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.log_incident(plate, reason, str(reporter.id), tag, bool(photo_id))
 
     except Exception as e:
-        logger.error(f"send_notification: {e}")
+        logger.error(f"send_notification: {e}", exc_info=True)
         await update.message.reply_text(
             "⚠️ Не вдалося надіслати. Власник ще не запускав бот — порадь йому написати /start.",
             reply_markup=ReplyKeyboardRemove(),
@@ -285,23 +287,16 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ── cancel ───────────────────────────────────────────────────────────────────
+# ── cancel / helper ───────────────────────────────────────────────────────────
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Скасовано. /start — головне меню.",
                                     reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-
-# ── helper ───────────────────────────────────────────────────────────────────
-
-async def _reply(update: Update, text: str, markup=None):
-    kwargs = dict(text=text, parse_mode="Markdown")
-    if markup:
-        kwargs["reply_markup"] = markup
-    else:
-        kwargs["reply_markup"] = ReplyKeyboardRemove()
-
+async def _send(update: Update, text: str, markup=None):
+    kwargs = dict(text=text, parse_mode="Markdown",
+                  reply_markup=markup or ReplyKeyboardRemove())
     if update.message:
         await update.message.reply_text(**kwargs)
     elif update.callback_query:
@@ -318,7 +313,10 @@ def main():
     app = Application.builder().token(token).build()
 
     owner_conv = ConversationHandler(
-        entry_points=[CommandHandler("owner", cmd_owner)],
+        entry_points=[
+            CommandHandler("owner", owner_entry_cmd),
+            CallbackQueryHandler(owner_entry_cb, pattern="^owner$"),
+        ],
         states={
             OWN_PLATE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, own_plate)],
             OWN_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, own_confirm)],
@@ -328,7 +326,10 @@ def main():
     )
 
     report_conv = ConversationHandler(
-        entry_points=[CommandHandler("report", cmd_report)],
+        entry_points=[
+            CommandHandler("report", report_entry_cmd),
+            CallbackQueryHandler(report_entry_cb, pattern="^report$"),
+        ],
         states={
             REP_PLATE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, rep_plate)],
             REP_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, rep_reason)],
@@ -341,7 +342,6 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^(owner|report)$"))
     app.add_handler(owner_conv)
     app.add_handler(report_conv)
 
