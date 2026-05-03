@@ -62,23 +62,27 @@ class SheetsDB:
         try:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._cars().append_row([plate, user_id, username, full_name, now])
+            logger.info(f"✅ Записано авто {plate} для {user_id}")
             return True
         except Exception as e:
-            logger.error(f"register_car: {e}")
+            logger.error(f"❌ register_car ПОМИЛКА: {e}", exc_info=True)
             return False
 
     def find_owner(self, plate):
         try:
+            logger.info(f"🔍 Шукаю власника для {plate}")
             for row in self._cars().get_all_records():
                 if str(row.get("plate", "")).upper() == plate.upper():
+                    logger.info(f"✅ Знайдено: {row.get('user_id')}")
                     return {
                         "plate":     row["plate"],
                         "user_id":   str(row["user_id"]),
                         "username":  row.get("username", ""),
                         "full_name": row.get("full_name", ""),
                     }
+            logger.info(f"❌ Власника для {plate} не знайдено")
         except Exception as e:
-            logger.error(f"find_owner: {e}")
+            logger.error(f"❌ find_owner ПОМИЛКА: {e}", exc_info=True)
         return None
 
     def get_cars_by_user(self, user_id):
