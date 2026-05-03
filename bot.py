@@ -30,15 +30,23 @@ db = SheetsDB()
 
 # ── стани ────────────────────────────────────────────────────────────────────
 OWN_PLATE, OWN_CONFIRM, OWN_MANAGE = range(3)
-REP_PLATE, REP_REASON, REP_PHOTO   = range(10, 13)
+REP_PLATE, REP_REASON, REP_CUSTOM, REP_PHOTO = range(10, 14)
 
 REASONS = [
     "🚗 Заблокував виїзд з гаража",
     "🛑 Загородив проїзд",
     "🚶 Припаркував на тротуарі",
     "🔄 Заблокував інше авто",
-    "✏️ Інше (написати вручну)",
+    "💡 Проблема з авто (світло, колесо...)",
+    "✏️ Інше — написати вручну",
 ]
+
+# Головне меню — постійна клавіатура
+MAIN_KB = ReplyKeyboardMarkup(
+    [["🚗 Я власник", "🔔 Повідомити про авто"]],
+    resize_keyboard=True,
+    is_persistent=True,
+)
 
 
 def norm(plate: str) -> str:
@@ -51,15 +59,24 @@ def valid(plate: str) -> bool:
 # ── /start ───────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚗 Я власник — зареєструвати авто", callback_data="owner")],
-        [InlineKeyboardButton("🔔 Повідомити про авто що заважає", callback_data="report")],
-    ])
     await update.message.reply_text(
-        "👋 *Система сповіщення про авто*\n\nОберіть дію:",
+        "👋 *Система сповіщення про авто*\n\n"
+        "Оберіть дію на кнопках внизу 👇",
         parse_mode="Markdown",
-        reply_markup=kb,
+        reply_markup=MAIN_KB,
     )
+
+# Обробник кнопок головного меню (текстові кнопки завжди видимі)
+async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == "🚗 Я власник":
+        return await _owner_menu(update, context)
+    if text == "🔔 Повідомити про авто":
+        await update.message.reply_text(
+            "🔔 *Повідомити про авто*\n\nВведи номерний знак:\nПриклад: `АЕ1234АЕ`",
+            parse_mode="Markdown",
+        )
+        return REP_PLATE
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -80,7 +97,7 @@ async def _owner_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cars = db.get_cars_by_user(user.id)
     if cars:
         text = "👤 *Мій гараж*\n\n" + "\n".join(f"🚗 {p}" for p in cars) + "\n\nЩо зробити?"
-        kb = [["➕ Додати авто", "🗑 Видалити авто"], ["📋 Мої авто", "🏠 Меню"]]
+        kb = [["➕ Додати авто", "🗑 Видалити авто"], ["📋 Мої авто"]]
         await _send(update, text, ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return OWN_MANAGE
     else:
@@ -123,22 +140,17 @@ async def own_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ *{plate}* зареєстровано!\n\nКоли хтось повідомить про твоє авто — прийде сповіщення 📱",
                 parse_mode="Markdown",
-                reply_markup=ReplyKeyboardRemove(),
+                reply_markup=MAIN_KB,
             )
         else:
-            await update.message.reply_text("❌ Помилка збереження. Спробуй /owner")
+            await update.message.reply_text("❌ Помилка збереження. Спробуй ще раз.", reply_markup=MAIN_KB)
     else:
-        await update.message.reply_text("Скасовано.", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("Скасовано.", reply_markup=MAIN_KB)
     return ConversationHandler.END
 
 async def own_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = update.effective_user
-
-    if text == "🏠 Меню":
-        await update.message.reply_text("Головне меню:", reply_markup=ReplyKeyboardRemove())
-        await cmd_start(update, context)
-        return ConversationHandler.END
 
     if text == "📋 Мої авто":
         cars = db.get_cars_by_user(user.id)
@@ -166,11 +178,11 @@ async def own_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _owner_menu(update, context)
         plate = norm(text)
         if db.remove_car(plate, str(user.id)):
-            await update.message.reply_text(f"✅ *{plate}* видалено.", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ *{plate}* видалено.", parse_mode="Markdown", reply_markup=MAIN_KB)
         else:
-            await update.message.reply_text("❌ Не знайдено.")
+            await update.message.reply_text("❌ Не знайдено.", reply_markup=MAIN_KB)
         context.user_data.pop("deleting", None)
-        return await _owner_menu(update, context)
+        return ConversationHandler.END
 
     return OWN_MANAGE
 
@@ -221,20 +233,38 @@ async def rep_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def rep_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    if text == "✏️ Інше (написати вручну)":
-        context.user_data["custom"] = True
-        await update.message.reply_text("Опиши проблему:", reply_markup=ReplyKeyboardRemove())
-        return REP_REASON
+    if text == "✏️ Інше — написати вручну":
+        context.user_data["rep_reason_label"] = "Інше"
+        await update.message.reply_text(
+            "✏️ Опиши ситуацію своїми словами:",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return REP_CUSTOM
 
-    if context.user_data.get("custom"):
-        context.user_data["rep_reason"] = text
-        context.user_data.pop("custom", None)
-    else:
-        context.user_data["rep_reason"] = re.sub(r"^.\s*", "", text).strip()
+    if text == "💡 Проблема з авто (світло, колесо...)":
+        context.user_data["rep_reason_label"] = "💡 Проблема з авто"
+        await update.message.reply_text(
+            "💡 Опиши проблему з авто:\n\n"
+            "Наприклад: загорілось світло в салоні, спустило колесо, відкриті двері...",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return REP_CUSTOM
 
+    # Обрали зі списку — одразу до фото
+    context.user_data["rep_reason"] = re.sub(r"^.\s*", "", text).strip()
+    return await _ask_photo(update, context)
+
+async def rep_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробляє вільний текст для 'Інше' і 'Проблема з авто'."""
+    label = context.user_data.get("rep_reason_label", "")
+    context.user_data["rep_reason"] = f"{label}: {update.message.text}" if label else update.message.text
+    return await _ask_photo(update, context)
+
+async def _ask_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reason = context.user_data["rep_reason"]
     kb = [["⏭ Пропустити фото"]]
     await update.message.reply_text(
-        f"Причина: *{context.user_data['rep_reason']}*\n\n📷 Надішли фото або пропусти:",
+        f"Причина: *{reason}*\n\n📷 Надішли фото або пропусти:",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True),
     )
@@ -248,16 +278,16 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Надішли фото або натисни «Пропустити фото».")
         return REP_PHOTO
 
-    plate  = context.user_data["rep_plate"]
-    owner  = context.user_data["rep_owner"]
-    reason = context.user_data.get("rep_reason", "Не вказано")
+    plate    = context.user_data["rep_plate"]
+    owner    = context.user_data["rep_owner"]
+    reason   = context.user_data.get("rep_reason", "Не вказано")
     reporter = update.effective_user
-    tag = f"@{reporter.username}" if reporter.username else reporter.full_name
+    tag      = f"@{reporter.username}" if reporter.username else reporter.full_name
 
     msg = (
-        f"🚨 *УВАГА! Проблема з твоїм авто!*\n\n"
+        f"🚨 *УВАГА! Повідомлення про твоє авто!*\n\n"
         f"🚗 Номер: *{plate}*\n"
-        f"⚠️ Проблема: {reason}\n\n"
+        f"⚠️ Причина: {reason}\n\n"
         f"📍 Повідомив: {tag}\n\n"
         "Будь ласка, відреагуй якнайшвидше! 🙏"
     )
@@ -273,7 +303,7 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"✅ *Сповіщення надіслано!*\n\nВласник *{plate}* отримав повідомлення. Дякуємо! 🙌",
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=MAIN_KB,
         )
         db.log_incident(plate, reason, str(reporter.id), tag, bool(photo_id))
 
@@ -281,7 +311,7 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"send_notification: {e}", exc_info=True)
         await update.message.reply_text(
             "⚠️ Не вдалося надіслати. Власник ще не запускав бот — порадь йому написати /start.",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=MAIN_KB,
         )
 
     return ConversationHandler.END
@@ -290,8 +320,7 @@ async def rep_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── cancel / helper ───────────────────────────────────────────────────────────
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Скасовано. /start — головне меню.",
-                                    reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Скасовано.", reply_markup=MAIN_KB)
     return ConversationHandler.END
 
 async def _send(update: Update, text: str, markup=None):
@@ -316,6 +345,7 @@ def main():
         entry_points=[
             CommandHandler("owner", owner_entry_cmd),
             CallbackQueryHandler(owner_entry_cb, pattern="^owner$"),
+            MessageHandler(filters.Regex("^🚗 Я власник$"), owner_entry_cmd),
         ],
         states={
             OWN_PLATE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, own_plate)],
@@ -329,10 +359,12 @@ def main():
         entry_points=[
             CommandHandler("report", report_entry_cmd),
             CallbackQueryHandler(report_entry_cb, pattern="^report$"),
+            MessageHandler(filters.Regex("^🔔 Повідомити про авто$"), report_entry_cmd),
         ],
         states={
             REP_PLATE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, rep_plate)],
             REP_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, rep_reason)],
+            REP_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, rep_custom)],
             REP_PHOTO:  [
                 MessageHandler(filters.PHOTO, rep_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, rep_photo),
